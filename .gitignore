@@ -1,0 +1,9 @@
+# Xcode intermediate and output files
+build/
+DerivedData/
+*.xcuserstate
+project.xcworkspace/xcuserdata/
+*.xcuserdatad/
+Payload/
+*.ipa
+*.log

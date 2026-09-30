@@ -1,0 +1,130 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Package iOS IPA
+    runs-on: macos-14
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Restore Unity iOS Static Libraries
+        run: |
+          echo "=== Restoring libil2cpp.a ==="
+          if [ -f "Libraries/libil2cpp.a.gz" ]; then
+            gzip -d Libraries/libil2cpp.a.gz
+            echo "Restored libil2cpp.a:"
+            ls -lh Libraries/libil2cpp.a
+          fi
+
+          echo "=== Restoring libiPhone-lib.a from split gzip chunks ==="
+          if ls Libraries/libiPhone-lib.a.gz.* 1> /dev/null 2>&1; then
+            cat Libraries/libiPhone-lib.a.gz.* | gzip -d > Libraries/libiPhone-lib.a
+            rm -f Libraries/libiPhone-lib.a.gz.*
+            echo "Restored libiPhone-lib.a:"
+            ls -lh Libraries/libiPhone-lib.a
+          fi
+
+      - name: Select Xcode Version
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app
+          xcodebuild -version
+          xcodebuild -showsdks | grep iphoneos
+
+      - name: Build Xcode Project
+        run: |
+          set -o pipefail
+          xcodebuild -project Unity-iPhone.xcodeproj \
+            -scheme Unity-iPhone \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            ARCHS="arm64" \
+            ONLY_ACTIVE_ARCH=NO \
+            ENABLE_BITCODE=NO \
+            IPHONEOS_DEPLOYMENT_TARGET="14.0" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            OTHER_LDFLAGS="-Wl,-ld_classic" \
+            PRODUCT_NAME=BadGame \
+            CONFIGURATION_BUILD_DIR=$PWD/build/Release-iphoneos \
+            2>&1 | tee build_output.log
+
+      - name: Show Build Errors (if build failed)
+        if: failure()
+        run: |
+          echo "=== LAST 200 LINES OF BUILD LOG ==="
+          tail -200 build_output.log
+          echo ""
+          echo "=== ERRORS ONLY ==="
+          grep -i "error:" build_output.log || echo "No error: lines found"
+          echo ""
+          echo "=== WARNINGS ==="
+          grep -i "warning:" build_output.log | head -30 || echo "No warnings found"
+
+      - name: Package IPA
+        run: |
+          echo "=== Build output directory contents ==="
+          ls -la build/Release-iphoneos/
+
+          APP_PATH=""
+          if [ -d "build/Release-iphoneos/BadGame.app" ]; then
+            APP_PATH="build/Release-iphoneos/BadGame.app"
+          fi
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: BadGame.app not found in build output!"
+            echo "Available items:"
+            find build/ -name "*.app" -type d 2>/dev/null || echo "No .app bundles found"
+            exit 1
+          fi
+
+          echo "=== App bundle contents ==="
+          ls -la "$APP_PATH/"
+
+          # Verify binary
+          if [ -f "$APP_PATH/BadGame" ]; then
+            echo "=== Binary info ==="
+            file "$APP_PATH/BadGame"
+            lipo -info "$APP_PATH/BadGame"
+          else
+            echo "WARNING: BadGame binary not found, checking executable name..."
+            find "$APP_PATH" -maxdepth 1 -type f -perm +111 | head -5
+          fi
+
+          # Create Payload structure
+          rm -rf Payload BadGame.ipa
+          mkdir -p Payload
+          cp -r "$APP_PATH" Payload/BadGame.app
+
+          # Fix CFBundleExecutable in Info.plist if needed
+          EXEC_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" Payload/BadGame.app/Info.plist 2>/dev/null || echo "BadGame")
+          echo "CFBundleExecutable: $EXEC_NAME"
+
+          if [ "$EXEC_NAME" != "BadGame" ] && [ -f "Payload/BadGame.app/$EXEC_NAME" ]; then
+            cp "Payload/BadGame.app/$EXEC_NAME" "Payload/BadGame.app/BadGame"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable BadGame" Payload/BadGame.app/Info.plist 2>/dev/null || true
+          fi
+
+          cd Payload && zip -r ../BadGame.ipa . && cd ..
+          echo "=== IPA created successfully ==="
+          ls -lh BadGame.ipa
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BadGame-iOS-IPA
+          path: BadGame.ipa
+          if-no-files-found: error
+
+      - name: Upload Build Log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build_log
+          path: build_output.log
