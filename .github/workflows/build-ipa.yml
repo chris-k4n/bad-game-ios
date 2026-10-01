@@ -36,6 +36,14 @@ jobs:
           xcodebuild -version
           xcodebuild -showsdks | grep iphoneos
 
+      - name: Make Scripts and Tools Executable
+        run: |
+          chmod -R +x *.sh || true
+          chmod +x usymtool 2>/dev/null || true
+          chmod +x MapFileParser 2>/dev/null || true
+          ls -la *.sh
+
+
       - name: Build Xcode Project
         run: |
           set -o pipefail
