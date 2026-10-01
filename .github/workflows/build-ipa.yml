@@ -119,7 +119,9 @@ jobs:
             /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable BadGame" Payload/BadGame.app/Info.plist 2>/dev/null || true
           fi
 
-          cd Payload && zip -r ../BadGame.ipa . && cd ..
+          zip -qr BadGame.ipa Payload
+          echo "=== IPA structure verification ==="
+          unzip -l BadGame.ipa | head -10
           echo "=== IPA created successfully ==="
           ls -lh BadGame.ipa
 
